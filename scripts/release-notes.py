@@ -32,17 +32,21 @@ def release_notes(tag):
     authored = section.group(1).strip() if section else ''
     changes = git('log', '--no-merges', '--format=%s (%h)', f'{previous}..{tag}' if previous else tag)
     commits = [f'- {line}' for line in changes.splitlines() if not line.startswith('release: v')]
-    package = f'ryotunes-{tag[1:]}-1-x86_64.pkg.tar.zst'
+    pkgbuild = git('show', f'{tag}:packaging/arch/PKGBUILD')
+    arches = re.search(r'^arch=\((.*)\)$', pkgbuild, re.M).group(1).replace("'", '').split()
+    package = f'ryotunes-{tag[1:]}-1-$(uname -m).pkg.tar.zst'
     sections = [f'# Ryotunes {tag}', authored, generated]
     if commits:
         sections.append('## Changes in this push\n\n' + '\n'.join(commits))
     sections.append(f'''## Install or update (Arch / CachyOS / Ryoku)
 
-Download `{package}` and `{package}.sha256`, then:
+Download the package for your machine ({', '.join(f'`{a}`' for a in arches)}) and its
+`.sha256` sidecar, then:
 
 ```bash
-sha256sum -c {package}.sha256
-sudo pacman -U ./{package}
+package={package}
+sha256sum -c "$package.sha256"
+sudo pacman -U "./$package"
 ```
 
 The package includes Ryotunes, ryotunesd, the CLI and native QML client. Its permanent

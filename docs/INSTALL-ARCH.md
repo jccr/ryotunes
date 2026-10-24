@@ -1,16 +1,17 @@
 # Install on Arch / CachyOS / Ryoku
 
-Ryotunes is primarily distributed as a precompiled x86_64 pacman package. Normal users should install that package rather than compiling the Tauri application locally.
+Ryotunes is primarily distributed as a precompiled x86_64 and aarch64 pacman package. Normal users should install that package rather than compiling the Tauri application locally.
 
 ## Precompiled package
 
-The push-triggered release pipeline publishes a prebuilt x86_64 package and its checksum,
-`ryotunes-X.Y.Z-1-x86_64.pkg.tar.zst` and the same filename with `.sha256` appended.
+The push-triggered release pipeline publishes a prebuilt package per architecture and its
+checksum, `ryotunes-X.Y.Z-1-<arch>.pkg.tar.zst` (`x86_64` or `aarch64`) and the same
+filename with `.sha256` appended.
 Verify the checksum, then install with pacman (which preserves ownership and pacman's
 signature policy):
 
 ```bash
-package=ryotunes-X.Y.Z-1-x86_64.pkg.tar.zst # Use the filename you downloaded.
+package=ryotunes-X.Y.Z-1-$(uname -m).pkg.tar.zst # Use the filename you downloaded.
 sha256sum -c "$package.sha256"
 sudo pacman -U "./$package"
 ```

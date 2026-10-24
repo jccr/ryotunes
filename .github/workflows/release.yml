@@ -8,9 +8,11 @@ name: Release
 #      run; manifests are fast-forwarded back to the default branch only when
 #      it has not moved in the meantime.
 #   2. package:  an unprivileged makepkg in an Arch container builds the reserved
-#      tag's exact source into ryotunes-<version>-1-x86_64.pkg.tar.zst (+ .sha256).
-#   3. publish:  a normal (latest, non-draft) GitHub release carrying the package,
-#      its sha256, a reproducible source tarball + sha256, and notes built from
+#      tag's exact source into ryotunes-<version>-1-<arch>.pkg.tar.zst (+ .sha256),
+#      natively for every arch the tag's PKGBUILD declares (x86_64 on Arch Linux,
+#      aarch64 on Arch Linux ARM).
+#   3. publish:  a normal (latest, non-draft) GitHub release carrying every
+#      package and its sha256, a reproducible source tarball + sha256, and notes built from
 #      the changelog plus install instructions. Ryoku's update/doctor read this
 #      release directly; there is no downstream repository_dispatch.
 #
@@ -47,6 +49,7 @@ jobs:
       action: ${{ steps.plan.outputs.action }}
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
+      arches: ${{ steps.plan.outputs.arches }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +61,9 @@ jobs:
       #   republish - an existing tag: rebuild and re-upload (manual dispatch, or
       #               automatic resume when a reserved tag has no complete release).
       #   skip      - this exact source is already fully released.
+      # The arches come from the PKGBUILD of the source being released, so a tag
+      # cut before a new arch was added is complete without it: resuming or
+      # repairing that tag never tries to build what its tree cannot.
       - name: Plan
         id: plan
         env:
@@ -66,6 +72,11 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          arches() {
+            git show "$1:packaging/arch/PKGBUILD" \
+              | sed -n "s/^arch=(\(.*\))$/\1/p" | tr -d "'\"" \
+              | jq -Rc 'split(" ") | map(select(. != ""))'
+          }
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             tag="$INPUT_TAG"
             [[ "$tag" =~ ^v1\.(0|[1-9][0-9]*)\.[0-9]$ ]] \
@@ -80,6 +91,7 @@ jobs:
               echo "action=republish"
               echo "version=$ver"
               echo "tag=$tag"
+              echo "arches=$(arches "$tag")"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -96,14 +108,16 @@ jobs:
           done
           if [[ -n "$reserved" ]]; then
             ver="${reserved#v}"
+            arch_list="$(arches "$reserved")"
             complete="$(gh release view "$reserved" --json isDraft,isPrerelease,assets 2>/dev/null || true)"
-            if RELEASE_JSON="$complete" VERSION="$ver" python3 - <<'PY'
+            if RELEASE_JSON="$complete" VERSION="$ver" ARCHES="$arch_list" python3 - <<'PY'
           import json, os, sys
           try:
               r = json.loads(os.environ["RELEASE_JSON"])
               v = os.environ["VERSION"]
-              package, source = f"ryotunes-{v}-1-x86_64.pkg.tar.zst", f"ryotunes-{v}.tar.gz"
-              required = {package, package + ".sha256", source, source + ".sha256"}
+              packages = [f"ryotunes-{v}-1-{a}.pkg.tar.zst" for a in json.loads(os.environ["ARCHES"])]
+              source = f"ryotunes-{v}.tar.gz"
+              required = {source, source + ".sha256"} | {n for p in packages for n in (p, p + ".sha256")}
               complete = not r["isDraft"] and not r["isPrerelease"] and required <= {a["name"] for a in r["assets"]}
           except (ValueError, KeyError):
               complete = False
@@ -116,8 +130,11 @@ jobs:
               echo "action=republish" >> "$GITHUB_OUTPUT"
               echo "$reserved is reserved but its release is incomplete; resuming"
             fi
-            echo "version=$ver" >> "$GITHUB_OUTPUT"
-            echo "tag=$reserved" >> "$GITHUB_OUTPUT"
+            {
+              echo "version=$ver"
+              echo "tag=$reserved"
+              echo "arches=$arch_list"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -126,6 +143,7 @@ jobs:
             echo "action=release"
             echo "version=$ver"
             echo "tag=v$ver"
+            echo "arches=$(arches "$src")"
           } >> "$GITHUB_OUTPUT"
           echo "reserving v$ver from $src"
 
@@ -207,13 +225,28 @@ jobs:
           fi
 
   package:
-    name: Build the Arch package
+    name: Build the Arch package (${{ matrix.arch }})
     needs: release
     if: needs.release.outputs.action != 'skip'
-    runs-on: ubuntu-24.04
+    # Every arch builds natively; publish waits for all of them, so a release is
+    # never published with one arch missing.
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.release.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     container:
-      image: archlinux:base-devel
+      image: ${{ matrix.arch == 'aarch64' && 'docker.io/menci/archlinuxarm:latest' || 'archlinux:base-devel' }}
     steps:
+      # pacman's Landlock sandbox cannot start in a container, and the Arch Linux
+      # ARM image ships an uninitialized keyring.
+      - name: Prepare pacman on Arch Linux ARM
+        if: matrix.arch == 'aarch64'
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman-key --init
+          pacman-key --populate archlinuxarm
+
       # actions/checkout needs git present in the container before it can run.
       - name: Install git for checkout
         run: pacman -Syu --noconfirm --needed git
@@ -226,15 +259,15 @@ jobs:
       # (docker run ... archlinux:latest scripts/build-arch-package.sh). It runs as
       # root, sets up an unprivileged builder, re-execs itself, builds the reserved
       # tag's exact source, and writes the epochless contract asset
-      # ryotunes-<version>-1-x86_64.pkg.tar.zst (+ .sha256) into dist/.
+      # ryotunes-<version>-1-<arch>.pkg.tar.zst (+ .sha256) into dist/.
       - name: Build the package
         run: scripts/build-arch-package.sh "$GITHUB_WORKSPACE/dist"
 
       - name: Upload the package
         uses: actions/upload-artifact@v4
         with:
-          name: arch-package
-          path: dist/ryotunes-*-x86_64.pkg.tar.zst*
+          name: arch-package-${{ matrix.arch }}
+          path: dist/ryotunes-*-${{ matrix.arch }}.pkg.tar.zst*
           if-no-files-found: error
 
   publish:
@@ -248,10 +281,11 @@ jobs:
           ref: ${{ needs.release.outputs.tag }}
           fetch-depth: 0
 
-      - name: Fetch the Arch package
+      - name: Fetch the Arch packages
         uses: actions/download-artifact@v4
         with:
-          name: arch-package
+          pattern: arch-package-*
+          merge-multiple: true
           path: dist
 
       - name: Source tarball
