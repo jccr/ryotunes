@@ -7,11 +7,11 @@ pkgrel=1
 # epoch=1 is permanent: the v1 reset publishes 1:X.Y.Z, which pacman ranks above
 # the legacy 2.x line an existing machine may carry, so `pacman -U` still upgrades.
 # The published asset name stays epochless (scripts/build-arch-package.sh renames
-# makepkg's epoch-tagged output back to the ryotunes-<pkgver>-1-x86_64 contract).
+# makepkg's epoch-tagged output back to the ryotunes-<pkgver>-1-<arch> contract).
 epoch=1
 pkgdesc="Ryoku's main music app — discover, stream, and enjoy your music collection"
 url='https://github.com/ryoku-dev/ryotunes'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 license=('GPL-3.0-or-later')
 depends=(
   'webkit2gtk-4.1'
@@ -40,7 +40,7 @@ makedepends=(
 install=ryotunes.install
 # makepkg's lto option feeds -flto to the C sources cc builds for the vendored sqlite and ring;
 # rustc links with lld, which cannot read GCC LTO objects (undefined sqlite3_* / ring_core_*).
-# !debug: the release ships exactly the one contracted asset (ryotunes-<ver>-1-x86_64.pkg.tar.zst),
+# !debug: the release ships exactly one contracted asset per arch (ryotunes-<ver>-1-<arch>.pkg.tar.zst),
 # never a second ryotunes-debug-* package, regardless of the builder's makepkg.conf.
 options=(!lto !debug)
 source=()

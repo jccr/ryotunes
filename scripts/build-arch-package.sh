@@ -6,8 +6,11 @@
 # The published asset name is the client contract that Ryoku's `update`/`doctor`
 # parse from the GitHub release:
 #
-#   ryotunes-<pkgver>-1-x86_64.pkg.tar.zst        # pkgrel is pinned to 1
-#   ryotunes-<pkgver>-1-x86_64.pkg.tar.zst.sha256 # "HEX␠␠filename"
+#   ryotunes-<pkgver>-1-<arch>.pkg.tar.zst        # pkgrel is pinned to 1
+#   ryotunes-<pkgver>-1-<arch>.pkg.tar.zst.sha256 # "HEX␠␠filename"
+#
+# <arch> is the build machine's (x86_64 or aarch64): each architecture is built
+# natively on its own runner, never cross-compiled.
 #
 # The file name is epochless, but the package metadata carries epoch=1
 # (pacman -Qp -> "ryotunes 1:<pkgver>-1"), so an install upgrades off the 2.x line.
@@ -18,6 +21,8 @@
 #
 # Local smoke on any machine with Docker (no Arch host required):
 #   docker run --rm -v "$PWD:/src" -w /src archlinux:latest scripts/build-arch-package.sh
+# On aarch64, use docker.io/menci/archlinuxarm:latest with DisableSandbox in its
+# /etc/pacman.conf and its keyring populated, as the Release workflow does.
 #
 # On an Arch host, run it directly as a normal (non-root) user:
 #   scripts/build-arch-package.sh
@@ -49,8 +54,11 @@ VERSION="$(sed -n 's/^version = "\([0-9.]*\)"/\1/p' "$ROOT/Cargo.toml" | head -1
 # machine on the legacy 2.x line upgrade — so we build with the epoch and copy the
 # result to the epochless contract name.
 EPOCH="$(sed -n 's/^epoch=\([0-9][0-9]*\)$/\1/p' "$ROOT/packaging/arch/PKGBUILD" | head -1)"
-WANT="ryotunes-${EPOCH:+$EPOCH:}${VERSION}-1-x86_64.pkg.tar.zst"
-CONTRACT="ryotunes-${VERSION}-1-x86_64.pkg.tar.zst"
+ARCH="$(uname -m)"
+WANT="ryotunes-${EPOCH:+$EPOCH:}${VERSION}-1-${ARCH}.pkg.tar.zst"
+CONTRACT="ryotunes-${VERSION}-1-${ARCH}.pkg.tar.zst"
+# Arch Linux ARM's makepkg.conf defaults to .pkg.tar.xz; the contract is zstd everywhere.
+export PKGEXT=.pkg.tar.zst
 
 cd "$ROOT/packaging/arch"
 
